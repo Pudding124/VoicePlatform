@@ -4,14 +4,20 @@ const http = require('http');
 const fs = require('fs');
 const bodyParser = require('body-parser');
 const ExpressPeerServer = require('peer').ExpressPeerServer;
-
 const app = express();
 const server = http.createServer(app);
-var indexPage = fs.readFileSync('index.html');
+const indexPage = fs.readFileSync('index.html');
+const io = require('socket.io')(server);
 
-app.get('/', (req, res, next) => res.send('Hello world!'));
 
 server.listen(9000);
+
+// 記錄所有頻道
+var allChannel = [];
+// 記錄每個頻道人員
+var allPeople = [];
+// 記錄每個人員所在頻道
+var allChannelInfo = [];
 
 const peerServer = ExpressPeerServer(server, {
   debug: true,
@@ -36,6 +42,7 @@ app.use('/peerjs', peerServer);
 app.use('/js', express.static('js'));
 app.use(bodyParser.json());
 
+/* peer server */
 peerServer.on('connection', (client) => {
   console.log(client.id + " 加入了");
 });
@@ -43,6 +50,64 @@ peerServer.on('connection', (client) => {
 peerServer.on('disconnect', (client) => {
   console.log(client.id + " 離開了")
 });
+/* peer server end */
+
+/* socket io */
+io.on('connect', socket => {
+
+  // handle the event sent with socket.send()
+  socket.on('message', (data) => {
+    console.log(data);
+  });
+
+  // 接收加入的 persion id
+  socket.on('personId', (personId) => {
+    console.log("新的連線成員：：" + personId);
+
+
+    // 檢查是否有相同名稱，有則覆蓋
+    if (allPeople.includes(personId)) {
+      for (let i = 0; i < allChannelInfo.length; i++) {
+        let info = allChannelInfo[i].split('|');
+        if (info[0] === personId) {
+          // 覆蓋
+          allChannelInfo[i] = personId + "|" + "-1";
+          break;
+        }
+      }
+    } else {
+      allPeople.push(personId);
+      allChannelInfo.push(personId + "|" + "-1");
+    }
+
+    // push 2D array 待解 ***********************
+    console.log("allChannelInfo：：" + allChannelInfo);
+    io.emit('channelInfo', allChannelInfo, allChannel);
+  });
+
+  // handle the event sent with socket.emit()
+  socket.on('join', (joinInfo) => {
+    console.log("成員加入頻道或離開頻道，頻道更新" + joinInfo);
+    let channelName = joinInfo.channel;
+    let personId = joinInfo.person;
+
+    for (let i = 0; i < allChannelInfo.length; i++) {
+      let info = allChannelInfo[i].split('|');
+      if (info[0] === personId) {
+        // 覆蓋
+        allChannelInfo[i] = personId + "|" + channelName;
+        break;
+      }
+    }
+
+    io.emit('channelInfo', allChannelInfo, allChannel);
+  });
+});
+/* socket io end */
+
+app.get('/', function (req, res) {
+  res.sendFile(__dirname + '/index.html')
+})
 
 app.get('/index', function (request, response) {
   response.writeHeader(200, { 'Content-Type': 'text/html' });
@@ -63,11 +128,22 @@ app.post('/addNewChannel', function (request, response) {
 });
 
 // 獲得所有頻道資訊
-app.get('/getAllChannel', function (request, response) {
-  mysqlCon.query('SELECT * FROM channel_list', function (err, data) {
-    response.send(data);
-    response.end();
-  });
+mysqlCon.query('SELECT * FROM channel_list', function (err, data) {
+  var sqlData = JSON.stringify(data);
+  var jsonData = JSON.parse(sqlData);
+
+  // 先清空所有頻道
+  allChannel = [];
+
+  for (let i = 0; i < jsonData.length; i++) {
+    // 避免空值
+    if (!jsonData[i]) return;
+
+    let channelName = jsonData[i].channel_name;
+    allChannel.push(channelName);
+
+    console.log("目前所有頻道：" + allChannel);
+  }
 });
 
 // // 加入頻道
